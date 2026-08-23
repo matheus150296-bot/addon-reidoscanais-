@@ -4,22 +4,40 @@ const axios = require("axios");
 const API_BASE = "https://api.reidoscanais.st";
 
 const builder = new addonBuilder({
-    id: "org.reidoscanais.grouped.stremio",
-    version: "2.2.0",
-    name: "Rei dos Canais - Catálogos & EPG",
-    description: "Canais agrupados por categoria e guia de programação.",
+    id: "org.reidoscanais.official.stremio",
+    version: "2.4.0",
+    name: "Rei dos Canais - Ao Vivo",
+    description: "Canais de TV agrupados por categoria e agenda esportiva separada.",
     resources: ["catalog", "meta", "stream"],
     types: ["tv"],
     idPrefixes: ["rdc_channel:", "rdc_sport:", "rdc:"],
     catalogs: [
-        { type: "tv", id: "rdc_todos", name: "Todos os Canais" },
-        { type: "tv", id: "rdc_agenda", name: "Agenda Esportiva" },
-        { type: "tv", id: "rdc_abertos", name: "Canais Abertos" },
-        { type: "tv", id: "rdc_esportes", name: "Esportes" },
-        { type: "tv", id: "rdc_filmes", name: "Filmes e Séries" },
-        { type: "tv", id: "rdc_docs", name: "Documentários" },
-        { type: "tv", id: "rdc_infantil", name: "Infantil" },
-        { type: "tv", id: "rdc_noticias", name: "Notícias" }
+        {
+            type: "tv",
+            id: "rdc_tv",
+            name: "Rei dos Canais - TV ao Vivo",
+            extra: [
+                {
+                    name: "genre",
+                    options: [
+                        "Todas",
+                        "Canais Abertos",
+                        "Esportes",
+                        "Filmes e Séries",
+                        "Documentários",
+                        "Infantil",
+                        "Notícias",
+                        "Entretenimento"
+                    ],
+                    isRequired: false
+                }
+            ]
+        },
+        {
+            type: "tv",
+            id: "rdc_sports",
+            name: "Rei dos Canais - Agenda Esportiva"
+        }
     ]
 });
 
@@ -28,24 +46,23 @@ const defaultHeaders = {
     "Referer": "https://reidoscanais.st/"
 };
 
-// Dicionário amplo de palavras-chave para garantir que os canais sejam agrupados corretamente
-const categoryKeywords = {
-    "rdc_abertos": ["aberto", "abertos", "variedade", "variedades", "globo", "sbt", "band", "record", "redetv"],
-    "rdc_esportes": ["esporte", "esportes", "sport", "sports", "premiere", "espn", "combate", "sportv", "caze"],
-    "rdc_filmes": ["filme", "filmes", "serie", "series", "série", "séries", "cinema", "hbo", "telecine", "paramount", "warner", "axn", "amc", "universal"],
-    "rdc_docs": ["doc", "docs", "documentario", "documentários", "discovery", "history", "nat geo", "national", "animal"],
-    "rdc_infantil": ["infantil", "kids", "desenho", "desenhos", "cartoon", "gloo", "disney", "nick", "toon"],
-    "rdc_noticias": ["noticia", "noticias", "notícia", "notícias", "jornal", "news", "cnn", "bandnews", "record news"]
-};
-
-// 1. CATÁLOGOS AGRUPADOS
+// 1. CATÁLOGOS COM FILTROS DE ISOLAMENTO
 builder.defineCatalogHandler(async (args) => {
     try {
-        if (args.id === "rdc_agenda") {
+        // AGENDA ESPORTIVA (Filtra estritamente apenas jogos e confrontos)
+        if (args.id === "rdc_sports") {
             const res = await axios.get(`${API_BASE}/sports?status=live`, { headers: defaultHeaders }).catch(() => null);
-            const sports = res?.data?.data || res?.data || [];
+            const rawSports = res?.data?.data || res?.data || [];
 
-            const metas = sports.map((item) => {
+            // Filtra removendo canais contínuos que por ventura venham na rota de esportes
+            const sportsOnly = rawSports.filter(item => {
+                const title = (item.title || item.name || "").toLowerCase();
+                const isMatch = title.includes(" x ") || title.includes(" vs ") || title.includes("vs.");
+                const hasCompetition = Boolean(item.competition || item.league || item.event_time);
+                return isMatch || hasCompetition;
+            });
+
+            const metas = sportsOnly.map((item) => {
                 const id = item.id || item.slug || String(item.title || item.name).toLowerCase().replace(/\s+/g, "-");
                 return {
                     id: `rdc_sport:${id}`,
@@ -59,21 +76,23 @@ builder.defineCatalogHandler(async (args) => {
             return { metas };
         }
 
-        const res = await axios.get(`${API_BASE}/channels`, { headers: defaultHeaders }).catch(() => null);
-        const channels = res?.data?.data || res?.data || [];
-        const keywords = categoryKeywords[args.id] || [];
+        // CANAIS DE TV AO VIVO
+        const selectedGenre = args.extra && args.extra.genre ? args.extra.genre : "Todas";
+        const endpoint = (selectedGenre !== "Todas") 
+            ? `${API_BASE}/channels?category=${encodeURIComponent(selectedGenre)}` 
+            : `${API_BASE}/channels`;
 
-        // Filtra os canais conferindo se o nome ou a categoria do canal contêm a palavra-chave
-        const filteredChannels = channels.filter((channel) => {
-            if (args.id === "rdc_todos" || !keywords.length) return true;
+        const res = await axios.get(endpoint, { headers: defaultHeaders }).catch(() => null);
+        let channels = res?.data?.data || res?.data || [];
 
-            const name = (channel.name || channel.title || "").toLowerCase();
-            const category = (channel.category || "").toLowerCase();
+        if (selectedGenre !== "Todas" && Array.isArray(channels)) {
+            channels = channels.filter(channel => {
+                const cat = (channel.category || channel.genre || "").toLowerCase();
+                return cat.includes(selectedGenre.toLowerCase());
+            });
+        }
 
-            return keywords.some(key => name.includes(key) || category.includes(key));
-        });
-
-        const metas = filteredChannels.map((item) => {
+        const metas = channels.map((item) => {
             const id = item.id || item.slug || String(item.name).toLowerCase().replace(/\s+/g, "-");
             const currentProg = item.epg?.current?.title ? `Agora: ${item.epg.current.title}` : (item.category || "TV ao Vivo");
 
@@ -92,7 +111,7 @@ builder.defineCatalogHandler(async (args) => {
     }
 });
 
-// 2. METADADOS E EPG
+// 2. METADADOS E EPG DETALHADO
 builder.defineMetaHandler(async (args) => {
     const rawId = args.id.replace("rdc_sport:", "").replace("rdc_channel:", "").replace("rdc:", "");
     const isSport = args.id.includes("rdc_sport:");
@@ -112,7 +131,7 @@ builder.defineMetaHandler(async (args) => {
                     id: args.id,
                     type: "tv",
                     name: rawId.toUpperCase().replace(/-/g, " "),
-                    description: "Informações indisponíveis."
+                    description: "Informações de programação indisponíveis no momento."
                 }
             };
         }
@@ -162,7 +181,7 @@ builder.defineMetaHandler(async (args) => {
     }
 });
 
-// 3. RETORNO DOS SERVIDORES
+// 3. SERVIDORES DISPONÍVEIS
 builder.defineStreamHandler(async (args) => {
     const rawId = args.id.replace("rdc_sport:", "").replace("rdc_channel:", "").replace("rdc:", "");
     

@@ -4,41 +4,47 @@ const axios = require("axios");
 const API_BASE = "https://api.reidoscanais.st";
 
 const builder = new addonBuilder({
-    id: "org.reidoscanais.rows.stremio",
-    version: "3.0.0",
-    name: "Rei dos Canais - Grade Completa",
-    description: "Canais de TV divididos em categorias independentes e agenda esportiva.",
+    id: "org.reidoscanais.v3.stremio",
+    version: "3.1.0",
+    name: "Rei dos Canais - Catálogos",
+    description: "Canais de TV agrupados por categorias e agenda esportiva ao vivo.",
     resources: ["catalog", "meta", "stream"],
     types: ["tv"],
     idPrefixes: ["rdc_channel:", "rdc_sport:", "rdc:"],
     catalogs: [
+        { type: "tv", id: "rdc_todos", name: "RDC - Todos os Canais" },
         { type: "tv", id: "rdc_agenda", name: "RDC - Agenda Esportiva" },
         { type: "tv", id: "rdc_abertos", name: "RDC - Canais Abertos" },
         { type: "tv", id: "rdc_esportes", name: "RDC - Esportes" },
         { type: "tv", id: "rdc_filmes", name: "RDC - Filmes e Séries" },
-        { type: "tv", id: "rdc_documentarios", name: "RDC - Documentários" },
+        { type: "tv", id: "rdc_docs", name: "RDC - Documentários" },
         { type: "tv", id: "rdc_infantil", name: "RDC - Infantil" },
-        { type: "tv", id: "rdc_noticias", name: "RDC - Notícias" },
-        { type: "tv", id: "rdc_todos", name: "RDC - Todos os Canais" }
+        { type: "tv", id: "rdc_noticias", name: "RDC - Notícias" }
     ]
 });
 
 const defaultHeaders = {
-    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Referer": "https://reidoscanais.st/"
 };
 
-// Dicionário de termos para mapear a categoria exata enviada pela API do site
-const categoryFilters = {
-    "rdc_abertos": ["aberto", "abertos", "variedades"],
-    "rdc_esportes": ["esporte", "esportes", "sports"],
-    "rdc_filmes": ["filme", "filmes", "série", "séries", "cinema"],
-    "rdc_documentarios": ["documentário", "documentários", "documentario", "documentarios", "ciência"],
-    "rdc_infantil": ["infantil", "kids", "desenho", "desenhos"],
-    "rdc_noticias": ["notícia", "notícias", "noticia", "noticias", "jornalismo"]
+// Palavras-chave amplas para capturar canais por Nome ou Categoria da API
+const categoryKeywords = {
+    "rdc_abertos": ["aberto", "abertos", "variedades", "globo", "sbt", "band", "record", "redetv", "tv cultura"],
+    "rdc_esportes": ["esporte", "esportes", "sport", "sports", "premiere", "espn", "combate", "sportv", "caze", "band sports"],
+    "rdc_filmes": ["filme", "filmes", "serie", "series", "série", "séries", "cinema", "hbo", "telecine", "paramount", "warner", "axn", "amc", "universal", "space", "tnt", "megapix"],
+    "rdc_docs": ["doc", "docs", "documentario", "documentarios", "documentário", "documentários", "discovery", "history", "nat geo", "national", "animal", "investigacao"],
+    "rdc_infantil": ["infantil", "kids", "desenho", "desenhos", "cartoon", "gloob", "disney", "nick", "toon", "bitita"],
+    "rdc_noticias": ["noticia", "noticias", "notícia", "notícias", "jornal", "news", "cnn", "bandnews", "record news", "jovem pan"]
 };
 
-// 1. PROCESSAMENTO DE CADA SEÇÃO/FILEIRA
+// Normalizador para ignorar acentos e maiúsculas/minúsculas
+function normalizeText(text) {
+    if (!text) return "";
+    return text.toString().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+// 1. CARREGAMENTO DOS CATÁLOGOS
 builder.defineCatalogHandler(async (args) => {
     try {
         // AGENDA ESPORTIVA
@@ -46,12 +52,7 @@ builder.defineCatalogHandler(async (args) => {
             const res = await axios.get(`${API_BASE}/sports?status=live`, { headers: defaultHeaders }).catch(() => null);
             const rawSports = res?.data?.data || res?.data || [];
 
-            const sportsOnly = rawSports.filter(item => {
-                const title = (item.title || item.name || "").toLowerCase();
-                return title.includes(" x ") || title.includes(" vs ") || Boolean(item.competition || item.event_time);
-            });
-
-            const metas = sportsOnly.map((item) => {
+            const metas = rawSports.map((item) => {
                 const id = item.id || item.slug || String(item.title || item.name).toLowerCase().replace(/\s+/g, "-");
                 return {
                     id: `rdc_sport:${id}`,
@@ -65,18 +66,21 @@ builder.defineCatalogHandler(async (args) => {
             return { metas };
         }
 
-        // DEMAIS CATEGORIAS DE CANAIS DE TV
+        // DEMAIS CATÁLOGOS DE CANAIS DE TV
         const res = await axios.get(`${API_BASE}/channels`, { headers: defaultHeaders }).catch(() => null);
         const channels = res?.data?.data || res?.data || [];
-        const validTerms = categoryFilters[args.id] || [];
+        const keywords = categoryKeywords[args.id] || [];
 
-        const filtered = channels.filter(channel => {
+        const filteredChannels = channels.filter((channel) => {
             if (args.id === "rdc_todos") return true;
-            const channelCat = (channel.category || "").toLowerCase();
-            return validTerms.some(term => channelCat.includes(term));
+
+            const name = normalizeText(channel.name || channel.title);
+            const category = normalizeText(channel.category || channel.genre);
+
+            return keywords.some(key => name.includes(key) || category.includes(key));
         });
 
-        const metas = filtered.map((item) => {
+        const metas = filteredChannels.map((item) => {
             const id = item.id || item.slug || String(item.name).toLowerCase().replace(/\s+/g, "-");
             const currentProg = item.epg?.current?.title ? `Agora: ${item.epg.current.title}` : (item.category || "TV ao Vivo");
 

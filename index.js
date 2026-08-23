@@ -4,10 +4,10 @@ const axios = require("axios");
 const API_BASE = "https://api.reidoscanais.st";
 
 const builder = new addonBuilder({
-    id: "org.reidoscanais.official.stremio",
-    version: "1.5.0",
-    name: "Rei dos Canais API - Internal Player",
-    description: "Canais ao vivo com tentativa de reprodução direta no Stremio.",
+    id: "org.reidoscanais.proxy.stremio",
+    version: "1.6.0",
+    name: "Rei dos Canais - Player Direto",
+    description: "Assista aos canais no player do Stremio via Proxy.",
     resources: ["catalog", "meta", "stream"],
     types: ["tv"],
     catalogs: [
@@ -58,7 +58,7 @@ builder.defineMetaHandler(async (args) => {
     };
 });
 
-// 3. RETORNO DOS STREAMS (TENTA HLS DIRETO PRIMEIRO)
+// 3. EXTRAÇÃO DE SERVIDORES
 builder.defineStreamHandler(async (args) => {
     const channelId = args.id.replace("rdc:", "");
     try {
@@ -81,17 +81,16 @@ builder.defineStreamHandler(async (args) => {
 
                 if (embedUrl) {
                     try {
-                        // Tenta raspar o código-fonte do player para achar o link do vídeo (.m3u8)
                         const embedRes = await axios.get(embedUrl, { 
                             headers: { ...defaultHeaders, "Referer": "https://reidoscanais.st/" },
-                            timeout: 3000 
+                            timeout: 4000 
                         });
 
                         const match = embedRes.data.match(/(https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*)/i);
 
                         if (match && match[1]) {
                             streams.push({
-                                title: `▶ Stremio Player - ${provider} ${quality}`,
+                                title: `▶ Stremio Direct - ${provider} ${quality}`,
                                 url: match[1],
                                 behaviorHints: {
                                     notSupported: false,
@@ -103,10 +102,10 @@ builder.defineStreamHandler(async (args) => {
                             });
                         }
                     } catch (e) {
-                        // Se falhar a raspagem, segue para o próximo
+                        // Caso a extração falhe
                     }
 
-                    // Opção de backup caso a extração do player falhe
+                    // Opção para abrir o Player Web do site
                     streams.push({
                         title: `🌐 Player Web - ${provider} ${quality}`,
                         externalUrl: embedUrl

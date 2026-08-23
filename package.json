@@ -1,0 +1,12 @@
+{
+  "name": "reidoscanais-addon",
+  "version": "1.1.0",
+  "main": "index.js",
+  "dependencies": {
+    "axios": "^1.6.0",
+    "stremio-addon-sdk": "^1.6.0"
+  },
+  "scripts": {
+    "start": "node index.js"
+  }
+}
